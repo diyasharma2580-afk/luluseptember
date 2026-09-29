@@ -33,6 +33,34 @@ import streamlit as st
 # =============================================================================
 st.set_page_config(page_title="LuLu UAE Sales Dashboard", page_icon="🛒", layout="wide")
 
+# Pink & purple theme + bold, underlined headings
+st.markdown(
+    """
+    <style>
+    .stApp { background: linear-gradient(180deg, #FDF2F8 0%, #F5F0FF 100%); }
+    h1, h2, h3, h4 {
+        font-weight: 800 !important;
+        text-decoration: underline !important;
+        text-decoration-color: #EC4899;
+        text-decoration-thickness: 3px;
+        text-underline-offset: 6px;
+        color: #581C87 !important;
+    }
+    [data-testid="stCaptionContainer"] { color: #7E22CE; }
+    [data-testid="stMetric"] { background: #FFFFFF; border-color: #E9D5FF !important; }
+    [data-testid="stVerticalBlockBorderWrapper"] { border-color: #E9D5FF; background: rgba(255,255,255,0.6); }
+    [data-testid="stMetricValue"] { color: #6B21A8; }
+    .stButton > button, [data-testid="stPopover"] button, .stDownloadButton > button {
+        border-color: #C084FC; color: #6B21A8;
+    }
+    .stButton > button:hover, [data-testid="stPopover"] button:hover, .stDownloadButton > button:hover {
+        border-color: #EC4899; color: #BE185D; background: #FDF2F8;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # =============================================================================
 # 2. SETTINGS USED ACROSS THE APP
 # =============================================================================
@@ -48,14 +76,16 @@ FESTIVE_SEASONS = ["White Friday", "DSF", "Ramadan", "Back to School"]
 # Each category always gets the SAME colour in every chart, so viewers
 # learn the colours once and can read every chart faster.
 CATEGORY_COLORS = {
-    "Fresh": "#2E9E5B",
-    "Grocery": "#E0A526",
-    "Fashion": "#C2408A",
-    "Home Decor": "#2A9D8F",
-    "Electronics": "#3A6FD8",
-    "Furniture": "#8C5A3C",
+    "Fresh": "#F48FB1",        # light pink
+    "Grocery": "#D81B60",      # deep pink
+    "Fashion": "#EC4899",      # hot pink
+    "Home Decor": "#C084FC",   # lavender
+    "Electronics": "#7E22CE",  # vivid purple
+    "Furniture": "#4A148C",    # dark violet
 }
-OTHER_COLORS = ["#3A6FD8", "#2A9D8F", "#E0A526", "#C2408A"]   # for charts not split by category
+OTHER_COLORS = ["#7E22CE", "#EC4899", "#C084FC", "#F9A8D4"]   # for charts not split by category
+PINK_PURPLE_SCALE = ["#FCE4F3", "#F9A8D4", "#EC4899", "#A855F7", "#581C87"]   # light pink -> dark purple
+DIVERGING_SCALE = ["#BE185D", "#F9A8D4", "#FDF2F8", "#D8B4FE", "#6B21A8"]     # negative pink -> positive purple
 CHART_HEIGHT = 380                                          # same height for every chart
 
 # The measures a user can choose, and the column each one comes from.
@@ -178,6 +208,10 @@ def style(fig):
         height=CHART_HEIGHT,
         margin=dict(l=0, r=0, t=10, b=0),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, title_text=""),
+        colorway=OTHER_COLORS,
+        font=dict(color="#4A148C"),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
     )
     return fig
 
@@ -306,264 +340,12 @@ def emirate_heatmap_card():
         fig = px.imshow(
             grid, aspect="auto",
             text_auto=".1f" if is_margin else ".3s",
-            # Margin can be negative, so use red-yellow-green centred on 0
-            color_continuous_scale="RdYlGn" if is_margin else "Greens",
+            # Margin can be negative, so use a pink-to-purple scale centred on 0
+            color_continuous_scale=DIVERGING_SCALE if is_margin else PINK_PURPLE_SCALE,
             color_continuous_midpoint=0 if is_margin else None,
             labels=dict(x="", y="", color=""),
         )
         st.plotly_chart(style(fig), key="chart_heatmap")
 
 
-# ------------------------------------------------------------ Sales over time
-@st.fragment
-def trend_card():
-    data = get_global_data()
-    with st.container(border=True):
-        with card_header("Sales over time", wide=True):
-            chosen = st.multiselect("Categories", CATEGORIES, placeholder="All categories", key="trend_categories")
-            grain = st.segmented_control("Group dates by", ["Daily", "Weekly", "Monthly"],
-                                         default="Monthly", required=True, key="trend_grain")
-            metric = st.radio("Measure", ["Net sales (AED)", "Profit (AED)", "Units sold", "Transactions"],
-                              key="trend_metric")
-            split = st.toggle("One line per category", value=True, key="trend_split")
-            show_seasons = st.toggle("Shade festive seasons", value=True, key="trend_seasons")
-
-        if chosen:
-            data = data[data["Category"].isin(chosen)]
-        show_active_filters(", ".join(chosen) if chosen else "All categories", grain, metric)
-        if data.empty:
-            return no_data_message()
-
-        # Put every date into a bucket: its day, its week or its month
-        freq = {"Daily": "D", "Weekly": "W", "Monthly": "M"}[grain]
-        data = data.assign(Period=data["Date"].dt.to_period(freq).dt.start_time)
-
-        summary = summarise(data, ["Period", "Category"] if split else "Period", metric)
-        fig = px.line(summary, x="Period", y=metric, markers=grain != "Daily",
-                      color="Category" if split else None, category_orders={"Category": CATEGORIES},
-                      color_discrete_map=CATEGORY_COLORS, color_discrete_sequence=["#34495E"])
-        fig.update_layout(xaxis_title=None)
-
-        if show_seasons:
-            # Find each season's first and last day from the Promotion column
-            everything = load_data()
-            first_shown, last_shown = data["Date"].min(), data["Date"].max()
-            for season in FESTIVE_SEASONS:
-                days = everything.loc[everything["Promotion"] == season, "Date"]
-                if days.max() >= first_shown and days.min() <= last_shown:   # only if it's in view
-                    fig.add_vrect(x0=days.min(), x1=days.max(), fillcolor="#E0A526", opacity=0.12,
-                                  line_width=0, annotation_text=season, annotation_position="top left",
-                                  annotation_font_size=11)
-
-        st.plotly_chart(style(fig), key="chart_trend")
-
-
-# --------------------------------------------------- Channel / payment mix
-@st.fragment
-def mix_card():
-    data = get_global_data()
-    with st.container(border=True):
-        with card_header("How customers buy and pay"):
-            view = st.radio("Break down by", ["Sales channel", "Payment method"], key="mix_view")
-            category = st.selectbox("Category", ["All categories"] + CATEGORIES, key="mix_category")
-            metric = st.radio("Measure", ["Net sales (AED)", "Transactions"], key="mix_metric")
-
-        if category != "All categories":
-            data = data[data["Category"] == category]
-        show_active_filters(view, category, metric)
-        if data.empty:
-            return no_data_message()
-
-        column = "Sales_Channel" if view == "Sales channel" else "Payment_Method"
-        summary = summarise(data, column, metric)
-        fig = px.pie(summary, names=column, values=metric, hole=0.55,
-                     color_discrete_sequence=OTHER_COLORS)
-        fig.update_traces(textinfo="percent", sort=True)
-        st.plotly_chart(style(fig), key="chart_mix")
-
-
-# ------------------------------------------------------ Promotion impact
-@st.fragment
-def promotion_card():
-    data = get_global_data()
-    with st.container(border=True):
-        with card_header("Do deeper discounts cost margin?"):
-            category = st.selectbox("Category", ["All categories"] + CATEGORIES, key="promo_category")
-            emirate = local_select("Emirate", ["All emirates"] + emirates_in(data), key="promo_emirate")
-
-        if category != "All categories":
-            data = data[data["Category"] == category]
-        if emirate != "All emirates":
-            data = data[data["Emirate"] == emirate]
-        show_active_filters(category, emirate)
-        if data.empty:
-            return no_data_message()
-
-        groups = data.groupby("Promotion")
-        summary = pd.DataFrame({
-            "Avg. discount (%)": groups["Discount_Pct"].mean(),
-            "Profit margin (%)": groups["Profit_AED"].sum() / groups["Net_Sales_AED"].sum() * 100,
-            "Transactions": groups["Transaction_ID"].count(),
-        }).sort_values("Avg. discount (%)").reset_index()
-
-        # Show how many transactions sit behind each bar (n=...). Few transactions
-        # = a less reliable bar, and it is honest to show that.
-        summary["Promotion"] = summary["Promotion"] + "<br>(n=" + summary["Transactions"].astype(str) + ")"
-
-        # Reshape to 'long' format so Plotly can draw two bars side by side
-        long = summary.melt(id_vars="Promotion", value_vars=["Avg. discount (%)", "Profit margin (%)"],
-                            var_name="Measure", value_name="Percent")
-        fig = px.bar(long, x="Promotion", y="Percent", color="Measure", barmode="group", text_auto=".1f",
-                     color_discrete_map={"Avg. discount (%)": "#E0A526", "Profit margin (%)": "#2E9E5B"})
-        fig.update_layout(xaxis_title=None, yaxis_title="%")
-        st.plotly_chart(style(fig), key="chart_promo")
-
-
-# ------------------------------------------------------ Customer profile
-@st.fragment
-def customer_card():
-    data = get_global_data()
-    with st.container(border=True):
-        with card_header("Who is buying"):
-            category = st.selectbox("Category", ["All categories"] + CATEGORIES, key="cust_category")
-            loyalty = st.radio("Customers", ["All customers", "Loyalty members", "Non-members"], key="cust_loyalty")
-            metric = st.radio("Measure", ["Net sales (AED)", "Transactions", "Average rating (1-5)"],
-                              key="cust_metric")
-
-        if category != "All categories":
-            data = data[data["Category"] == category]
-        if loyalty != "All customers":
-            data = data[data["Loyalty_Member"] == ("Yes" if loyalty == "Loyalty members" else "No")]
-        show_active_filters(category, loyalty, metric)
-        if data.empty:
-            return no_data_message()
-
-        summary = summarise(data, ["Age_Group", "Gender"], metric)
-        fig = px.bar(summary, x="Age_Group", y=metric, color="Gender", barmode="group",
-                     text_auto=".2f" if metric.startswith("Average") else ".3s",
-                     category_orders={"Age_Group": AGE_GROUPS},
-                     color_discrete_map={"Female": "#4C5B7A", "Male": "#A3B4CC"},
-                     labels={"Age_Group": "Age group"})
-        st.plotly_chart(style(fig), key="chart_customers")
-
-
-# ------------------------------------------------- Top sub-categories table
-@st.fragment
-def top_products_card():
-    data = get_global_data()
-    with st.container(border=True):
-        with card_header("Top sub-categories"):
-            chosen = st.multiselect("Categories", CATEGORIES, placeholder="All categories", key="top_categories")
-            sort_by = st.selectbox("Rank by", ["Net sales (AED)", "Profit (AED)", "Units sold",
-                                               "Transactions", "Profit margin (%)"], key="top_sort")
-            top_n = st.slider("How many to show", 5, 30, 10, key="top_n")
-
-        if chosen:
-            data = data[data["Category"].isin(chosen)]
-        show_active_filters(", ".join(chosen) if chosen else "All categories", f"top {top_n} by {sort_by}")
-        if data.empty:
-            return no_data_message()
-
-        groups = data.groupby(["Sub_Category", "Category"])
-        table = pd.DataFrame({
-            "Net sales (AED)": groups["Net_Sales_AED"].sum(),
-            "Profit (AED)": groups["Profit_AED"].sum(),
-            "Units sold": groups["Units_Sold"].sum(),
-            "Transactions": groups["Transaction_ID"].count(),
-        })
-        table["Profit margin (%)"] = table["Profit (AED)"] / table["Net sales (AED)"] * 100
-        table = table.sort_values(sort_by, ascending=False).head(top_n).reset_index()
-
-        st.dataframe(
-            table, hide_index=True, height=CHART_HEIGHT,
-            column_config={
-                "Sub_Category": st.column_config.TextColumn("Sub-category", pinned=True),
-                "Category": st.column_config.TextColumn(width="small"),
-                # A bar inside the cell makes the biggest sellers easy to spot
-                "Net sales (AED)": st.column_config.ProgressColumn(
-                    "Net sales", format="compact", color="#2E9E5B", width="small",
-                    min_value=0, max_value=float(table["Net sales (AED)"].max())),
-                "Profit (AED)": st.column_config.NumberColumn("Profit", format="compact", width="small"),
-                "Units sold": st.column_config.NumberColumn("Units", width="small"),
-                "Transactions": st.column_config.NumberColumn("Txns", width="small"),
-                "Profit margin (%)": st.column_config.NumberColumn("Margin", format="%.1f%%", width="small"),
-            },
-        )
-
-
-# ------------------------------------------------------ Raw data explorer
-@st.fragment
-def data_explorer_card():
-    data = get_global_data()
-    all_columns = list(data.columns)
-    starter_columns = ["Transaction_ID", "Timestamp", "Emirate", "Store_Name", "Category",
-                       "Sub_Category", "Units_Sold", "Net_Sales_AED", "Profit_AED", "Promotion"]
-    with st.container(border=True):
-        with card_header("Raw data", wide=True):
-            columns = st.multiselect("Columns to show", all_columns, default=starter_columns, key="raw_columns")
-            category = st.selectbox("Category", ["All categories"] + CATEGORIES, key="raw_category")
-
-        if category != "All categories":
-            data = data[data["Category"] == category]
-        columns = columns or all_columns          # nothing picked = show every column
-        show_active_filters(category, f"{len(data):,} rows", f"{len(columns)} of {len(all_columns)} columns")
-
-        st.dataframe(data[columns], hide_index=True, height=300)
-        st.download_button("Download these rows as CSV", data[columns].to_csv(index=False),
-                           file_name="lulu_sales_filtered.csv", mime="text/csv",
-                           icon=":material/download:", on_click="ignore")
-
-
-# =============================================================================
-# 6. PAGE LAYOUT  (this is the part that actually draws the page, top to bottom)
-# =============================================================================
-df = load_data()
-first_day, last_day = df["Date"].min().date(), df["Date"].max().date()
-
-st.title("🛒 LuLu UAE Sales Dashboard")
-st.caption(f"Synthetic data for teaching, not real LuLu figures. {len(df):,} transactions "
-           f"from {first_day:%d %b %Y} to {last_day:%d %b %Y}.")
-
-# ---- Global filters (they change every chart) ----
-with st.container(border=True):
-    date_col, emirate_col = st.columns([1, 2])
-    date_col.date_input("Date range", value=(first_day, last_day), min_value=first_day,
-                        max_value=last_day, format="DD/MM/YYYY", key="global_dates")
-    emirate_col.multiselect("Emirates", EMIRATES, placeholder="All emirates", key="global_emirates")
-    st.caption("These two filters change every chart. Each chart's Filters button changes only that chart.")
-
-# While someone is picking dates, the date box holds just the first date.
-# Wait until both dates are chosen before drawing anything.
-if len(st.session_state["global_dates"]) != 2:
-    st.info("Pick an end date to finish setting the date range.")
-    st.stop()
-
-if get_global_data().empty:
-    st.warning("No transactions in this date range and emirate selection. Widen the global filters.")
-    st.stop()
-
-# ---- KPIs ----
-kpi_row()
-
-# ---- Charts: two per row, wide charts get the full row ----
-left, right = st.columns(2)
-with left:
-    sales_by_category_card()
-with right:
-    emirate_heatmap_card()
-
-trend_card()
-
-left, right = st.columns(2)
-with left:
-    mix_card()
-with right:
-    promotion_card()
-
-left, right = st.columns(2)
-with left:
-    customer_card()
-with right:
-    top_products_card()
-
-data_explorer_card()
+# ------------------------------------------------------------
